@@ -40,4 +40,9 @@ Diagram alur: Collect -> Label (regex + LLM + validasi manual) -> Fitur -> Match
 ## 7. Lain-lain (20%)
 - Link GitHub (kode, dataset, prompt LLM, requirements.txt, README cara menjalankan).
 - Screenshot: kursus OA 100%, eksekusi kode, query Oracle, tabel hasil.
-- Undang [email redacted for public repository] ke repo + submit di MS Teams.
+- Submit tautan kode dan laporan di MS Teams.
+
+## 8. Cara Menjalankan Aman
+- Atur token GitHub sebagai variabel lingkungan `GITHUB_TOKEN`; jangan tulis token atau password ke dalam kode/repo.
+- Jalankan demo: `python atm_phase_oracle.py demo`.
+- Untuk Oracle, teruskan password melalui parameter `pwd` dari environment/secret management yang aman.

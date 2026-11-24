@@ -10,12 +10,45 @@ import requests
 from scipy.stats import mannwhitneyu
 
 # ================= A. FASE PR =================
-def fetch_timeline(repo, num, token=os.getenv("GITHUB_TOKEN", "")):
-    """Ambil event PR: commit, review, comment, merged (REST timeline API)."""
-    h = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
-    r = requests.get(f"https://api.github.com/repos/{repo}/issues/{num}/timeline?per_page=100", headers=h)
-    r.raise_for_status()
-    return r.json()
+def fetch_timeline(repo, num, token=None):
+    """Ambil dan normalisasi event PR melalui GitHub REST API."""
+    token = token if token is not None else os.getenv("GITHUB_TOKEN")
+    h = {"Accept": "application/vnd.github+json"}
+    if token:
+        h["Authorization"] = f"Bearer {token}"
+
+    pull = requests.get(f"https://api.github.com/repos/{repo}/pulls/{num}", headers=h)
+    pull.raise_for_status()
+    timeline = requests.get(f"https://api.github.com/repos/{repo}/issues/{num}/timeline?per_page=100", headers=h)
+    timeline.raise_for_status()
+
+    pull_data = pull.json()
+    rows = []
+    if pull_data.get("created_at"):
+        rows.append({"t": pull_data["created_at"], "type": "pull",
+                     "actor": pull_data.get("user", {}).get("login")})
+    for event in timeline.json():
+        event_type = event.get("event")
+        actor = event.get("actor") or event.get("user") or {}
+        actor_login = actor.get("login")
+        if event_type == "committed":
+            t = event.get("committed_at") or event.get("created_at")
+            kind = "commit"
+        elif event_type == "reviewed":
+            t = event.get("submitted_at") or event.get("created_at")
+            kind = "approved" if event.get("state") == "APPROVED" else "review"
+        elif event_type == "commented":
+            t = event.get("created_at")
+            kind = "comment"
+        elif event_type == "merged":
+            t = event.get("created_at") or pull_data.get("merged_at")
+            kind = "merged"
+        else:
+            continue
+        if t:
+            rows.append({"t": t, "type": kind, "actor": actor_login})
+
+    return pd.DataFrame(rows, columns=["t", "type", "actor"])
 
 def phases_from_events(ev, pr_author):
     """
@@ -23,6 +56,8 @@ def phases_from_events(ev, pr_author):
     Return jam per fase: submission, review, waiting, change (definisi paper).
     Fase 5 (setelah acceptance -> merge) dikecualikan karena paper tidak menemukan GPT di situ.
     """
+    ev = ev.copy()
+    ev["t"] = pd.to_datetime(ev["t"], utc=True)
     ev = ev.sort_values("t").reset_index(drop=True)
     commits = ev[ev.type == "commit"]
     others = ev[(ev.type.isin(["review", "comment"])) & (ev.actor != pr_author)]
@@ -48,10 +83,11 @@ def compare_phases(df):
         ma, mn = a.median(), n.median()
         rows.append({"phase": ph, "med_assisted": ma, "med_non": mn,
                      "reduction_%": round(100 * (1 - ma / mn), 1) if mn else np.nan,
-                     "U": u, "p": p, "rank_biserial": round(1 - 2 * u / (len(a) * len(n)), 3)})
+                     "U": u, "p": p,
+                     "rank_biserial": round(2 * u / (len(a) * len(n)) - 1, 3)})
     out = pd.DataFrame(rows)
     # koreksi Bonferroni: 4 uji berganda -> alpha = 0.05/4 (paper tidak melakukannya; nilai tambah)
-    out["signif_bonf"] = out.p < 0.05 / max(len(out), 1)
+    out["signif_bonf"] = out.p < 0.05 / 4
     return out
 
 # ================= B. ORACLE 23ai =================
